@@ -1,0 +1,38 @@
+﻿# IDE files
+.idea
+.fleet
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# Build systems
+.gradle
+out/
+bin/
+build/
+gen/
+deps/
+
+# Rust build artifacts
+/target/
+Cargo.lock
+/pretty_printers_tests/target
+/native-helper/target
+/attributes-info/target
+
+# Project specific
+exampleProject
+testData
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local config files
+.env
+.env.local
