@@ -100,9 +100,12 @@ impl NotepadApp {
     }
 
     fn insert_image_from_bytes(&mut self, image_bytes: Vec<u8>) -> Result<(), Box<dyn std::error::Error>> {
+        println!("Inserting image from {} bytes", image_bytes.len());
         let img = image::load_from_memory(&image_bytes)?;
         let (width, height) = img.dimensions();
         let id = Uuid::new_v4().to_string();
+        
+        println!("Created image ID: {}, dimensions: {}x{}", id, width, height);
         
         // Store image data and metadata
         self.image_data.insert(id.clone(), image_bytes.clone());
@@ -123,6 +126,8 @@ impl NotepadApp {
         // Insert image reference at the end of current text
         let position = self.text.len();
         self.images.push((position, image_element));
+        
+        println!("Added image to images vector. Total images: {}", self.images.len());
         
         self.is_modified = true;
         Ok(())
@@ -149,8 +154,11 @@ impl NotepadApp {
     }
 
     fn paste_image_from_clipboard(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        println!("Attempting to paste image from clipboard...");
         let mut clipboard = arboard::Clipboard::new()?;
         let image_data = clipboard.get_image()?;
+        
+        println!("Got image data: {}x{}", image_data.width, image_data.height);
         
         let mut buffer = Vec::new();
         let img = image::RgbaImage::from_raw(
@@ -162,7 +170,10 @@ impl NotepadApp {
         let dynamic_img = DynamicImage::ImageRgba8(img);
         let mut cursor = std::io::Cursor::new(&mut buffer);
         dynamic_img.write_to(&mut cursor, image::ImageOutputFormat::Png)?;
+        
+        println!("Created PNG buffer of {} bytes", buffer.len());
         self.insert_image_from_bytes(buffer)?;
+        println!("Successfully inserted image. Total images: {}", self.images.len());
         Ok(())
     }
 
@@ -352,7 +363,9 @@ impl eframe::App for NotepadApp {
                         ui.close_menu();
                     }
                     if ui.button("Paste Image (Ctrl+V)").clicked() {
-                        let _ = self.paste_image_from_clipboard();
+                        if let Err(e) = self.paste_image_from_clipboard() {
+                            println!("Error pasting image: {}", e);
+                        }
                         ui.close_menu();
                     }
                     if ui.button("Insert Sample Image").clicked() {
@@ -398,70 +411,134 @@ impl eframe::App for NotepadApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             // Handle global Ctrl+V for image paste
             if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::V)) {
-                let _ = self.paste_image_from_clipboard();
+                if let Err(e) = self.paste_image_from_clipboard() {
+                    println!("Error pasting image: {}", e);
+                }
             }
             
-            ui.vertical(|ui| {
-                // Main text editor - full screen like Windows Notepad
-                let text_edit = egui::TextEdit::multiline(&mut self.text)
-                    .desired_width(f32::INFINITY)
-                    .desired_rows(20);
-                    
-                let response = ui.add_sized(ui.available_size(), text_edit);
-                
-                if response.changed() {
-                    self.is_modified = true;
-                }
-                
-                // Display images below the text editor
-                if !self.images.is_empty() {
-                    ui.separator();
-                    ui.label("Images in document:");
+            // Create a mixed content display with text and images inline
+            ui.horizontal(|ui| {
+                // Line numbers column
+                ui.vertical(|ui| {
+                    ui.set_width(40.0);
+                    let line_count = self.text.lines().count().max(1);
                     
                     egui::ScrollArea::vertical()
-                        .auto_shrink([false, true])
-                        .max_height(200.0)
+                        .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            for (_, image_element) in &self.images {
-                                if let ContentElement::Image { id, width, height } = image_element {
-                                    // Load image into texture cache if not already loaded
-                                    if !self.image_cache.contains_key(id) {
-                                        if let Some(image_bytes) = self.image_data.get(id) {
-                                            if let Ok(image) = image::load_from_memory(image_bytes) {
-                                                let size = [image.width() as usize, image.height() as usize];
-                                                let image_buffer = image.to_rgba8();
-                                                let pixels = image_buffer.as_flat_samples();
-                                                let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                                                    size,
-                                                    pixels.as_slice(),
+                            for i in 1..=line_count {
+                                ui.label(format!("{:3}", i));
+                            }
+                        });
+                });
+                
+                ui.separator();
+                
+                // Main content area
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            // Split text by image insertion points and render mixed content
+                            let mut text_parts = Vec::new();
+                            let mut last_pos = 0;
+                            
+                            // Sort images by position
+                            let mut sorted_images = self.images.clone();
+                            sorted_images.sort_by_key(|&(pos, _)| pos);
+                            
+                            for &(pos, ref image_element) in &sorted_images {
+                                // Add text before this image
+                                if pos > last_pos {
+                                    let text_slice = &self.text[last_pos.min(self.text.len())..pos.min(self.text.len())];
+                                    if !text_slice.is_empty() {
+                                        text_parts.push((text_slice.to_string(), None));
+                                    }
+                                }
+                                
+                                // Add the image
+                                text_parts.push((String::new(), Some(image_element.clone())));
+                                last_pos = pos;
+                            }
+                            
+                            // Add remaining text
+                            if last_pos < self.text.len() {
+                                let remaining_text = &self.text[last_pos..];
+                                if !remaining_text.is_empty() {
+                                    text_parts.push((remaining_text.to_string(), None));
+                                }
+                            }
+                            
+                            // If no images, just show the text editor
+                            if text_parts.is_empty() || (text_parts.len() == 1 && text_parts[0].1.is_none()) {
+                                let text_edit = egui::TextEdit::multiline(&mut self.text)
+                                    .desired_width(f32::INFINITY);
+                                let response = ui.add_sized(ui.available_size(), text_edit);
+                                
+                                if response.changed() {
+                                    self.is_modified = true;
+                                }
+                            } else {
+                                // Render mixed content
+                                for (text, image_opt) in text_parts {
+                                    if let Some(image_element) = image_opt {
+                                        if let ContentElement::Image { id, width, height } = image_element {
+                                            // Load image into texture cache if not already loaded
+                                            if !self.image_cache.contains_key(&id) {
+                                                if let Some(image_bytes) = self.image_data.get(&id) {
+                                                    if let Ok(image) = image::load_from_memory(image_bytes) {
+                                                        let size = [image.width() as usize, image.height() as usize];
+                                                        let image_buffer = image.to_rgba8();
+                                                        let pixels = image_buffer.as_flat_samples();
+                                                        let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                                            size,
+                                                            pixels.as_slice(),
+                                                        );
+                                                        let texture = ctx.load_texture(id.clone(), color_image, egui::TextureOptions::default());
+                                                        self.image_cache.insert(id.clone(), texture);
+                                                    }
+                                                }
+                                            }
+                                            
+                                            if let Some(texture) = self.image_cache.get(&id) {
+                                                let max_width = ui.available_width() - 20.0;
+                                                let scale = if width as f32 > max_width {
+                                                    max_width / width as f32
+                                                } else {
+                                                    1.0
+                                                };
+                                                
+                                                let image_size = egui::Vec2::new(
+                                                    width as f32 * scale,
+                                                    height as f32 * scale
                                                 );
-                                                let texture = ctx.load_texture(id.clone(), color_image, egui::TextureOptions::default());
-                                                self.image_cache.insert(id.clone(), texture);
+                                                
+                                                ui.add(egui::Image::from_texture(texture).fit_to_exact_size(image_size));
+                                            } else {
+                                                ui.label("[IMAGE LOAD ERROR]");
                                             }
                                         }
+                                    } else if !text.is_empty() {
+                                        // Show text as a read-only label for now
+                                        ui.label(&text);
                                     }
-                                    
-                                    if let Some(texture) = self.image_cache.get(id) {
-                                        let max_width = ui.available_width() - 20.0;
-                                        let scale = if *width as f32 > max_width {
-                                            max_width / *width as f32
-                                        } else {
-                                            0.5 // Show images at 50% size in preview
-                                        };
-                                        
-                                        let image_size = egui::Vec2::new(
-                                            *width as f32 * scale,
-                                            *height as f32 * scale
-                                        );
-                                        
-                                        ui.add(egui::Image::from_texture(texture).fit_to_exact_size(image_size));
-                                    } else {
-                                        ui.label("[IMAGE LOAD ERROR]");
-                                    }
+                                }
+                                
+                                // Add a text editor at the end for continuing to type
+                                ui.separator();
+                                let mut new_text = String::new();
+                                let text_edit = egui::TextEdit::multiline(&mut new_text)
+                                    .desired_width(f32::INFINITY)
+                                    .hint_text("Continue typing...");
+                                let response = ui.add(text_edit);
+                                
+                                if response.changed() && !new_text.is_empty() {
+                                    self.text.push_str(&new_text);
+                                    self.is_modified = true;
                                 }
                             }
                         });
-                }
+                    });
             });
         });
     }
