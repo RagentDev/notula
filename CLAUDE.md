@@ -75,28 +75,44 @@ cargo clippy
 ## Current Features
 
 ### Windows Notepad-like Interface
-- **Menu Bar**: File, Edit, and View menus with standard options
-- **Status Bar**: Real-time display of line number, column number, and character count
-- **Full-screen Text Editor**: Text editing area fills entire window space
+- **Menu Bar**: File, Edit, and View menus with comprehensive options
+- **Status Bar**: Real-time display of line number and character count
+- **Full-screen Text Editor**: Line-by-line editing with visual cursor indicator (→)
 - **Dynamic Window Title**: Shows "Untitled - Notepad" or "filename - Notepad" with "*" for modified files
 
+### Image Support
+- **Clipboard Paste**: Ctrl+V to paste images from clipboard
+- **Menu Insert**: "Paste Image" and "Insert Sample Image" options
+- **Inline Display**: Images rendered with automatic scaling to fit window
+- **Line-based Layout**: Each image occupies its own line for easy organization
+- **Easy Deletion**: Backspace removes images when cursor is on image line
+
 ### File Operations
-- **New**: Create new document (clears current content)
-- **Save**: Save current document to existing file path
-- **Exit**: Close application
-- File modification tracking with visual indicator in title
+- **Dual File Format**: 
+  - Text files (.txt/.md) with `[img_load("id")]` placeholders
+  - Metadata files (.txt.meta/.md.meta) with base64-encoded image data
+- **Smart Save/Load**: Automatically handles text + metadata persistence
+- **Version Control Friendly**: Text content separate from binary image data
+- **Cross-platform Compatibility**: Standard text files readable anywhere
 
 ### Text Editing
-- Multi-line text editing with full keyboard support
-- Real-time cursor position tracking
-- Character count display
-- Automatic text change detection
+- **Line-by-line editing**: Each line is a separate editable element
+- **Navigation**: Arrow keys, mouse clicks, Enter for new lines
+- **Real-time tracking**: Line numbers, character count, modification status
+- **Mixed Content**: Seamless integration of text and images
+
+### Data Architecture
+- **ContentElement enum**: Handles both Text(String) and Image{id, width, height}
+- **DocumentMetadata struct**: Serializable image storage with UUID references
+- **Texture caching**: Efficient GPU texture management for image display
+- **Base64 encoding**: Compact JSON storage of image data
 
 ### TODO/Placeholder Features
-- Open file dialog (File → Open)
-- Save As file dialog (File → Save As)
-- Edit operations (Undo, Cut, Copy, Paste, Select All, Find)
+- Open/Save As file dialogs
+- Text clipboard operations (Cut, Copy, Paste text)
+- Edit operations (Undo, Redo, Select All, Find)
 - View options (Word Wrap, Font selection)
+- Drag & drop image support
 
 ## Project Structure
 
