@@ -44,10 +44,10 @@ enum ContentElement {
 }
 
 struct NotepadApp {
-    content: Vec<ContentElement>,
+    text: String,
+    images: Vec<(usize, ContentElement)>, // (position_in_text, image_element)
     file_path: Option<PathBuf>,
     is_modified: bool,
-    cursor_line: usize,
     image_cache: HashMap<String, egui::TextureHandle>,
     image_data: HashMap<String, Vec<u8>>, // Store actual image data
     metadata: DocumentMetadata,
@@ -56,10 +56,10 @@ struct NotepadApp {
 impl Default for NotepadApp {
     fn default() -> Self {
         Self {
-            content: vec![ContentElement::Text(String::new())],
+            text: String::new(),
+            images: Vec::new(),
             file_path: None,
             is_modified: false,
-            cursor_line: 0,
             image_cache: HashMap::new(),
             image_data: HashMap::new(),
             metadata: DocumentMetadata {
@@ -82,19 +82,16 @@ impl NotepadApp {
     }
 
     fn get_stats(&self) -> (usize, usize) {
-        let line_count = self.content.len();
-        let char_count = self.content.iter().map(|element| match element {
-            ContentElement::Text(text) => text.chars().count(),
-            ContentElement::Image { .. } => 1, // Count images as 1 character
-        }).sum();
+        let line_count = self.text.lines().count().max(1);
+        let char_count = self.text.chars().count() + self.images.len(); // Include images in char count
         (line_count, char_count)
     }
 
     fn new_file(&mut self) {
-        self.content = vec![ContentElement::Text(String::new())];
+        self.text = String::new();
+        self.images.clear();
         self.file_path = None;
         self.is_modified = false;
-        self.cursor_line = 0;
         self.image_cache.clear();
         self.image_data.clear();
         self.metadata = DocumentMetadata {
@@ -123,14 +120,10 @@ impl NotepadApp {
             height,
         };
         
-        // Insert image at current cursor position
-        if self.cursor_line >= self.content.len() {
-            self.content.push(image_element);
-        } else {
-            self.content.insert(self.cursor_line, image_element);
-        }
+        // Insert image reference at the end of current text
+        let position = self.text.len();
+        self.images.push((position, image_element));
         
-        self.cursor_line += 1;
         self.is_modified = true;
         Ok(())
     }
@@ -173,31 +166,22 @@ impl NotepadApp {
         Ok(())
     }
 
-    fn delete_current_line(&mut self) {
-        if self.cursor_line < self.content.len() {
-            self.content.remove(self.cursor_line);
-            if self.content.is_empty() {
-                self.content.push(ContentElement::Text(String::new()));
-            }
-            if self.cursor_line >= self.content.len() {
-                self.cursor_line = self.content.len().saturating_sub(1);
-            }
-            self.is_modified = true;
-        }
-    }
 
     fn content_to_text(&self) -> String {
-        self.content.iter()
-            .map(|element| match element {
-                ContentElement::Text(text) => text.clone(),
-                ContentElement::Image { id, .. } => format!("[img_load(\"{}\")]", id),
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        let mut result = self.text.clone();
+        // Insert image placeholders at their positions
+        for (_, image) in &self.images {
+            if let ContentElement::Image { id, .. } = image {
+                result.push_str(&format!("\n[img_load(\"{}\")]", id));
+            }
+        }
+        result
     }
 
     fn text_to_content(&mut self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
-        self.content.clear();
+        self.images.clear();
+        let mut text_content = String::new();
+        
         for line in text.lines() {
             if line.starts_with("[img_load(\"") && line.ends_with("\")]") {
                 // Extract image ID
@@ -206,11 +190,14 @@ impl NotepadApp {
                 let id = &line[start..end];
                 
                 if let Some(image_meta) = self.metadata.images.get(id) {
-                    self.content.push(ContentElement::Image {
+                    let image_element = ContentElement::Image {
                         id: id.to_string(),
                         width: image_meta.width,
                         height: image_meta.height,
-                    });
+                    };
+                    
+                    // Store image at current text position
+                    self.images.push((text_content.len(), image_element));
                     
                     // Decode and store image data if not already present
                     if !self.image_data.contains_key(id) {
@@ -219,16 +206,20 @@ impl NotepadApp {
                     }
                 } else {
                     // Fallback to text if image not found
-                    self.content.push(ContentElement::Text(line.to_string()));
+                    if !text_content.is_empty() {
+                        text_content.push('\n');
+                    }
+                    text_content.push_str(line);
                 }
             } else {
-                self.content.push(ContentElement::Text(line.to_string()));
+                if !text_content.is_empty() {
+                    text_content.push('\n');
+                }
+                text_content.push_str(line);
             }
         }
         
-        if self.content.is_empty() {
-            self.content.push(ContentElement::Text(String::new()));
-        }
+        self.text = text_content;
         Ok(())
     }
 
@@ -304,13 +295,12 @@ impl NotepadApp {
         
         self.file_path = Some(path);
         self.is_modified = false;
-        self.cursor_line = 0;
         Ok(())
     }
 }
 
 impl eframe::App for NotepadApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Update window title
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.get_window_title()));
 
@@ -379,11 +369,6 @@ impl eframe::App for NotepadApp {
                         // TODO: Implement find
                         ui.close_menu();
                     }
-                    ui.separator();
-                    if ui.button("Delete Current Line").clicked() {
-                        self.delete_current_line();
-                        ui.close_menu();
-                    }
                 });
 
                 ui.menu_button("View", |ui| {
@@ -403,9 +388,9 @@ impl eframe::App for NotepadApp {
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let (line_count, char_count) = self.get_stats();
-                ui.label(format!("Line {}/{}", self.cursor_line + 1, line_count));
+                ui.label(format!("Lines: {}", line_count));
                 ui.separator();
-                ui.label(format!("{} characters", char_count));
+                ui.label(format!("Characters: {}", char_count));
             });
         });
 
@@ -416,128 +401,68 @@ impl eframe::App for NotepadApp {
                 let _ = self.paste_image_from_clipboard();
             }
             
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.vertical(|ui| {
-                        let mut to_delete = None;
-                        let mut insert_new_line = None;
-                        let mut new_cursor_line = self.cursor_line;
-                        let mut content_changed = false;
-                        
-                        for (i, element) in self.content.iter_mut().enumerate() {
-                            ui.horizontal(|ui| {
-                                // Line number indicator
-                                if i == self.cursor_line {
-                                    ui.label("→");
-                                } else {
-                                    ui.label(" ");
-                                }
-                                
-                                match element {
-                                    ContentElement::Text(text) => {
-                                        let text_edit = egui::TextEdit::singleline(text)
-                                            .desired_width(f32::INFINITY);
-                                        let response = ui.add(text_edit);
-                                        
-                                        if response.changed() {
-                                            content_changed = true;
-                                        }
-                                        
-                                        if response.has_focus() {
-                                            new_cursor_line = i;
-                                        }
-                                        
-                                        // Handle key presses
-                                        if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                                            insert_new_line = Some(i + 1);
-                                            new_cursor_line = i + 1;
-                                        }
-                                        
-                                        if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Backspace)) && text.is_empty() && i > 0 {
-                                            to_delete = Some(i);
+            ui.vertical(|ui| {
+                // Main text editor - full screen like Windows Notepad
+                let text_edit = egui::TextEdit::multiline(&mut self.text)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(20);
+                    
+                let response = ui.add_sized(ui.available_size(), text_edit);
+                
+                if response.changed() {
+                    self.is_modified = true;
+                }
+                
+                // Display images below the text editor
+                if !self.images.is_empty() {
+                    ui.separator();
+                    ui.label("Images in document:");
+                    
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, true])
+                        .max_height(200.0)
+                        .show(ui, |ui| {
+                            for (_, image_element) in &self.images {
+                                if let ContentElement::Image { id, width, height } = image_element {
+                                    // Load image into texture cache if not already loaded
+                                    if !self.image_cache.contains_key(id) {
+                                        if let Some(image_bytes) = self.image_data.get(id) {
+                                            if let Ok(image) = image::load_from_memory(image_bytes) {
+                                                let size = [image.width() as usize, image.height() as usize];
+                                                let image_buffer = image.to_rgba8();
+                                                let pixels = image_buffer.as_flat_samples();
+                                                let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                                    size,
+                                                    pixels.as_slice(),
+                                                );
+                                                let texture = ctx.load_texture(id.clone(), color_image, egui::TextureOptions::default());
+                                                self.image_cache.insert(id.clone(), texture);
+                                            }
                                         }
                                     }
-                                    ContentElement::Image { id, width, height } => {
-                                        // Load image into texture cache if not already loaded
-                                        if !self.image_cache.contains_key(id) {
-                                            if let Some(image_bytes) = self.image_data.get(id) {
-                                                if let Ok(image) = image::load_from_memory(image_bytes) {
-                                                    let size = [image.width() as usize, image.height() as usize];
-                                                    let image_buffer = image.to_rgba8();
-                                                    let pixels = image_buffer.as_flat_samples();
-                                                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                                                        size,
-                                                        pixels.as_slice(),
-                                                    );
-                                                    let texture = ctx.load_texture(id.clone(), color_image, egui::TextureOptions::default());
-                                                    self.image_cache.insert(id.clone(), texture);
-                                                }
-                                            }
-                                        }
-                                        
-                                        if let Some(texture) = self.image_cache.get(id) {
-                                            let max_width = ui.available_width() - 50.0;
-                                            let scale = if *width as f32 > max_width {
-                                                max_width / *width as f32
-                                            } else {
-                                                1.0
-                                            };
-                                            
-                                            let image_size = egui::Vec2::new(
-                                                *width as f32 * scale,
-                                                *height as f32 * scale
-                                            );
-                                            
-                                            let image_response = ui.add(egui::Image::from_texture(texture).fit_to_exact_size(image_size));
-                                            
-                                            if image_response.clicked() {
-                                                new_cursor_line = i;
-                                            }
-                                            
-                                            // Handle backspace on images
-                                            if self.cursor_line == i && ui.input(|i| i.key_pressed(egui::Key::Backspace)) {
-                                                to_delete = Some(i);
-                                            }
+                                    
+                                    if let Some(texture) = self.image_cache.get(id) {
+                                        let max_width = ui.available_width() - 20.0;
+                                        let scale = if *width as f32 > max_width {
+                                            max_width / *width as f32
                                         } else {
-                                            ui.label("[IMAGE LOAD ERROR]");
-                                        }
+                                            0.5 // Show images at 50% size in preview
+                                        };
+                                        
+                                        let image_size = egui::Vec2::new(
+                                            *width as f32 * scale,
+                                            *height as f32 * scale
+                                        );
+                                        
+                                        ui.add(egui::Image::from_texture(texture).fit_to_exact_size(image_size));
+                                    } else {
+                                        ui.label("[IMAGE LOAD ERROR]");
                                     }
                                 }
-                            });
-                        }
-                        
-                        // Apply changes after the loop
-                        self.cursor_line = new_cursor_line;
-                        if content_changed {
-                            self.is_modified = true;
-                        }
-                        
-                        if let Some(index) = insert_new_line {
-                            self.content.insert(index, ContentElement::Text(String::new()));
-                            self.cursor_line = index;
-                            self.is_modified = true;
-                        }
-                        
-                        if let Some(index) = to_delete {
-                            self.content.remove(index);
-                            if self.content.is_empty() {
-                                self.content.push(ContentElement::Text(String::new()));
                             }
-                            if self.cursor_line >= self.content.len() {
-                                self.cursor_line = self.content.len().saturating_sub(1);
-                            }
-                            self.is_modified = true;
-                        }
-                        
-                        // Add new line button
-                        if ui.button("+ Add New Line").clicked() {
-                            self.content.push(ContentElement::Text(String::new()));
-                            self.cursor_line = self.content.len() - 1;
-                            self.is_modified = true;
-                        }
-                    });
-                });
+                        });
+                }
+            });
         });
     }
 }
