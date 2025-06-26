@@ -633,22 +633,16 @@ impl eframe::App for NotepadApp {
             ui.horizontal(|ui| {
                 // Line numbers column
                 let line_height = 14.0;
-                let available_height = ui.available_height();
-                let num_visible_lines = (available_height / line_height) as usize + 2;
-                let start_line = (self.scroll_offset / line_height) as usize;
-                let end_line = (start_line + num_visible_lines).min(self.lines.len());
                 
                 ui.vertical(|ui| {
                     ui.set_width(50.0);
-                    ui.set_height(available_height);
                     ui.style_mut().visuals.extreme_bg_color = egui::Color32::from_gray(240);
                     
-                    // Line numbers synchronized with content
-                    for line_idx in start_line..end_line {
+                    // Show line numbers for all lines
+                    for line_idx in 0..self.lines.len() {
                         let line_num = line_idx + 1;
                         ui.horizontal(|ui| {
                             ui.set_min_height(line_height);
-                            ui.set_max_height(line_height);
                             let text = format!("{:4}", line_num);
                             let color = if line_idx == self.cursor_line {
                                 egui::Color32::from_rgb(0, 100, 200)
@@ -662,25 +656,14 @@ impl eframe::App for NotepadApp {
                 
                 ui.separator();
                 
-                // Main editor area
-                ui.vertical(|ui| {
-                    // Calculate available space for content
-                    let available_rect = ui.available_rect_before_wrap();
-                    let content_height = available_rect.height();
-                    
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .max_height(content_height)
-                        .scroll_offset(egui::Vec2::new(0.0, self.scroll_offset))
-                        .show(ui, |ui| {
-                            // Ensure we use the full width and calculate proper height
-                            ui.allocate_space(egui::Vec2::new(ui.available_width(), content_height.max(self.lines.len() as f32 * line_height)));
-                            
-                            // Render all lines, filling the space
+                // Main editor area - use all available space
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.vertical(|ui| {
                             for (line_idx, line) in self.lines.iter().enumerate() {
                                 ui.horizontal(|ui| {
                                     ui.set_min_height(line_height);
-                                    ui.set_max_height(line_height);
                                     
                                     // Render line content
                                     for element in &line.elements {
@@ -756,13 +739,8 @@ impl eframe::App for NotepadApp {
                                     }
                                 });
                             }
-                            
-                            // Fill remaining space if needed
-                            if self.lines.len() as f32 * line_height < content_height {
-                                ui.allocate_space(egui::Vec2::new(ui.available_width(), content_height - (self.lines.len() as f32 * line_height)));
-                            }
                         });
-                });
+                    });
             });
         });
     }
