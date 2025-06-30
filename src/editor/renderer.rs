@@ -20,7 +20,6 @@ impl EditorRenderer {
             let (start_line, start_col) = editor.selection_start.unwrap();
             let (end_line, end_col) = editor.selection_end.unwrap();
 
-            // Ensure start is before end
             let (start_line, start_col, end_line, end_col) =
                 if start_line < end_line || (start_line == end_line && start_col < end_col) {
                     (start_line, start_col, end_line, end_col)
@@ -30,11 +29,7 @@ impl EditorRenderer {
 
             if line_idx >= start_line && line_idx <= end_line {
                 let sel_start = if line_idx == start_line { start_col } else { 0 };
-                let sel_end = if line_idx == end_line {
-                    end_col
-                } else {
-                    line_len
-                };
+                let sel_end = if line_idx == end_line { end_col } else { line_len };
                 (Some(sel_start), Some(sel_end))
             } else {
                 (None, None)
@@ -43,38 +38,53 @@ impl EditorRenderer {
             (None, None)
         };
 
+        let show_cursor = line_idx == editor.cursor_line && editor.cursor_visible;
+        let cursor_col = editor.cursor_col;
+
         ui.horizontal(|ui| {
-            let mut char_idx = 0;
+            ui.spacing_mut().item_spacing.x = 0.0;
 
-            while char_idx <= line_len {
-                // Check if we need to show cursor here
-                let show_cursor = line_idx == editor.cursor_line
-                    && char_idx == editor.cursor_col
-                    && editor.cursor_visible;
+            // Split text into segments around cursor and selection
+            let mut current_pos = 0;
 
-                // Check if we're in selection
-                let in_selection = if let (Some(sel_start), Some(sel_end)) =
-                    (selection_start_col, selection_end_col)
-                {
-                    char_idx >= sel_start && char_idx < sel_end
-                } else {
-                    false
-                };
-
-                if show_cursor {
-                    // Show blinking cursor
-                    ui.colored_label(egui::Color32::BLACK, "|");
+            while current_pos <= line_len {
+                // Show cursor if it's at this position
+                if show_cursor && cursor_col == current_pos {
+                    ui.colored_label(egui::Color32::WHITE, "|");
                 }
 
-                if char_idx < line_len {
-                    let ch = chars[char_idx];
-                    let char_str = ch.to_string();
+                if current_pos < line_len {
+                    // Find the end of the current segment (next cursor position or selection boundary)
+                    let mut segment_end = current_pos + 1;
+
+                    // Check if we're in a selection
+                    let in_selection = if let (Some(sel_start), Some(sel_end)) = (selection_start_col, selection_end_col) {
+                        current_pos >= sel_start && current_pos < sel_end
+                    } else {
+                        false
+                    };
+
+                    // Extend segment while selection state remains the same
+                    while segment_end < line_len {
+                        let next_in_selection = if let (Some(sel_start), Some(sel_end)) = (selection_start_col, selection_end_col) {
+                            segment_end >= sel_start && segment_end < sel_end
+                        } else {
+                            false
+                        };
+
+                        if next_in_selection != in_selection || (show_cursor && cursor_col == segment_end) {
+                            break;
+                        }
+                        segment_end += 1;
+                    }
+
+                    // Render the segment
+                    let segment: String = chars[current_pos..segment_end].iter().collect();
 
                     if in_selection {
-                        // Render selected text with highlight
                         let mut job = egui::text::LayoutJob::default();
                         job.append(
-                            &char_str,
+                            &segment,
                             0.0,
                             egui::TextFormat {
                                 background: egui::Color32::from_rgb(173, 214, 255),
@@ -84,24 +94,17 @@ impl EditorRenderer {
                         );
                         ui.label(job);
                     } else {
-                        // Regular text
-                        ui.label(&char_str);
+                        ui.label(&segment);
                     }
+
+                    current_pos = segment_end;
+                } else {
+                    break;
                 }
-
-                char_idx += 1;
-            }
-
-            // Handle empty lines or lines that need cursor at the end
-            if line_len == 0
-                && line_idx == editor.cursor_line
-                && editor.cursor_col == 0
-                && editor.cursor_visible
-            {
-                ui.colored_label(egui::Color32::BLACK, "|");
             }
         });
     }
+
     pub fn render(
         ui: &mut egui::Ui,
         ctx: &egui::Context,
@@ -112,37 +115,65 @@ impl EditorRenderer {
     ) {
         // Custom editor with line numbers
         ui.horizontal(|ui| {
-            // Line numbers column
-            let line_height = 14.0;
+            // Calculate line heights first
+            let base_line_height = 14.0;
+            let mut line_heights: Vec<f32> = Vec::new();
 
+            for line in lines {
+                let mut max_height: f32 = base_line_height;
+
+                for element in &line.elements {
+                    if let LineElement::Image { width, height, .. } = element {
+                        let max_width = ui.available_width() - 70.0; // Account for line numbers + padding
+                        let scale = if *width as f32 > max_width {
+                            max_width / *width as f32
+                        } else {
+                            1.0
+                        };
+                        let scaled_height = *height as f32 * scale;
+                        max_height = max_height.max(scaled_height);
+                    }
+                }
+                line_heights.push(max_height);
+            }
+
+            // Line numbers column
             ui.vertical(|ui| {
                 ui.set_width(50.0);
                 ui.style_mut().visuals.extreme_bg_color = egui::Color32::from_gray(240);
 
-                // Show line numbers for all lines
-                for line_idx in 0..lines.len() {
+                // Show line numbers with calculated heights
+                for (line_idx, &line_height) in line_heights.iter().enumerate() {
                     let line_num = line_idx + 1;
                     ui.horizontal(|ui| {
                         ui.set_min_height(line_height);
-                        let text = format!("{:4}", line_num);
-                        let color = if line_idx == editor.cursor_line {
-                            egui::Color32::from_rgb(0, 100, 200)
-                        } else {
-                            egui::Color32::from_gray(120)
-                        };
-                        ui.colored_label(color, text);
+                        ui.allocate_ui_with_layout(
+                            egui::Vec2::new(50.0, line_height),
+                            egui::Layout::top_down(egui::Align::RIGHT),
+                            |ui| {
+                                let text = format!("{:4}", line_num);
+                                let color = if line_idx == editor.cursor_line {
+                                    egui::Color32::from_rgb(0, 100, 200)
+                                } else {
+                                    egui::Color32::from_gray(120)
+                                };
+                                ui.colored_label(color, text);
+                            },
+                        );
                     });
                 }
             });
 
             ui.separator();
 
-            // Main editor area - use all available space
+            // Main editor area
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
                         for (line_idx, line) in lines.iter().enumerate() {
+                            let line_height = line_heights[line_idx];
+
                             ui.horizontal(|ui| {
                                 ui.set_min_height(line_height);
 
@@ -187,7 +218,6 @@ impl EditorRenderer {
 
                                                 let response = ui.add(egui::Image::from_texture(texture).fit_to_exact_size(image_size));
 
-                                                // Allow clicking on image to position cursor
                                                 if response.clicked() {
                                                     editor.cursor_line = line_idx;
                                                     editor.cursor_col = 0;
