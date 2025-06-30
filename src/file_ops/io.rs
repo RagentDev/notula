@@ -1,13 +1,15 @@
-use crate::models::{DocumentLine, LineElement, DocumentMetadata, ImageMetadata};
+use crate::models::{DocumentLine, DocumentMetadata, LineElement};
+use base64::{Engine as _, engine::general_purpose};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::collections::HashMap;
-use base64::{Engine as _, engine::general_purpose};
 
 pub fn content_to_text(lines: &[DocumentLine]) -> String {
-    lines.iter()
+    lines
+        .iter()
         .map(|line| {
-            line.elements.iter()
+            line.elements
+                .iter()
                 .map(|element| match element {
                     LineElement::Text(text) => text.clone(),
                     LineElement::Image { id, .. } => format!("[img_load(\"{}\")]", id),
@@ -20,31 +22,31 @@ pub fn content_to_text(lines: &[DocumentLine]) -> String {
 }
 
 pub fn text_to_content(
-    text: &str, 
+    text: &str,
     metadata: &DocumentMetadata,
-    image_data: &mut HashMap<String, Vec<u8>>
+    image_data: &mut HashMap<String, Vec<u8>>,
 ) -> Result<Vec<DocumentLine>, Box<dyn std::error::Error>> {
     let mut lines = Vec::new();
-    
+
     for line_text in text.lines() {
         if line_text.starts_with("[img_load(\"") && line_text.ends_with("\")]") {
             // Extract image ID
             let start = "[img_load(\"".len();
             let end = line_text.len() - "\")]".len();
             let id = &line_text[start..end];
-            
+
             if let Some(image_meta) = metadata.images.get(id) {
                 let image_element = LineElement::Image {
                     id: id.to_string(),
                     width: image_meta.width,
                     height: image_meta.height,
                 };
-                
+
                 let line = DocumentLine {
                     elements: vec![image_element],
                 };
                 lines.push(line);
-                
+
                 // Decode and store image data if not already present
                 if !image_data.contains_key(id) {
                     let image_bytes = general_purpose::STANDARD.decode(&image_meta.data)?;
@@ -64,29 +66,32 @@ pub fn text_to_content(
             lines.push(line);
         }
     }
-    
+
     if lines.is_empty() {
         lines.push(DocumentLine::new());
     }
-    
+
     Ok(lines)
 }
 
 pub fn save_to_path(
     path: PathBuf,
     lines: &[DocumentLine],
-    metadata: &DocumentMetadata
+    metadata: &DocumentMetadata,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let text_content = content_to_text(lines);
-    
+
     // Determine file extension
-    let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("txt");
-    
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("txt");
+
     match extension {
         "md" | "txt" => {
             // Save as plain text with image placeholders
             fs::write(&path, text_content)?;
-            
+
             // Save metadata file if there are images
             if !metadata.images.is_empty() {
                 let metadata_path = path.with_extension(format!("{}.meta", extension));
@@ -104,18 +109,30 @@ pub fn save_to_path(
             }
         }
     }
-    
+
     Ok(())
 }
 
-pub fn load_from_path(path: PathBuf) -> Result<(Vec<DocumentLine>, DocumentMetadata, HashMap<String, Vec<u8>>), Box<dyn std::error::Error>> {
+pub fn load_from_path(
+    path: PathBuf,
+) -> Result<
+    (
+        Vec<DocumentLine>,
+        DocumentMetadata,
+        HashMap<String, Vec<u8>>,
+    ),
+    Box<dyn std::error::Error>,
+> {
     // Read the text content
     let text_content = fs::read_to_string(&path)?;
-    
+
     // Try to load metadata file
-    let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("txt");
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("txt");
     let metadata_path = path.with_extension(format!("{}.meta", extension));
-    
+
     let metadata = if metadata_path.exists() {
         let metadata_json = fs::read_to_string(metadata_path)?;
         serde_json::from_str(&metadata_json)?
@@ -124,11 +141,11 @@ pub fn load_from_path(path: PathBuf) -> Result<(Vec<DocumentLine>, DocumentMetad
             images: HashMap::new(),
         }
     };
-    
+
     let mut image_data = HashMap::new();
-    
+
     // Parse content
     let lines = text_to_content(&text_content, &metadata, &mut image_data)?;
-    
+
     Ok((lines, metadata, image_data))
 }

@@ -12,16 +12,21 @@ impl StatusBar {
             ui.label(format!("Characters: {}", char_count));
         });
     }
-    
+
     fn get_stats(lines: &[DocumentLine]) -> (usize, usize) {
         let line_count = lines.len();
-        let char_count = lines.iter()
+        let char_count = lines
+            .iter()
             .map(|line| line.text_content().chars().count())
-            .sum::<usize>() + 
-            lines.iter()
-                .map(|line| line.elements.iter()
-                    .filter(|e| matches!(e, LineElement::Image { .. }))
-                    .count())
+            .sum::<usize>()
+            + lines
+                .iter()
+                .map(|line| {
+                    line.elements
+                        .iter()
+                        .filter(|e| matches!(e, LineElement::Image { .. }))
+                        .count()
+                })
                 .sum::<usize>();
         (line_count, char_count)
     }

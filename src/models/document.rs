@@ -15,9 +15,10 @@ impl DocumentLine {
             elements: vec![LineElement::Text(String::new())],
         }
     }
-    
+
     pub fn text_content(&self) -> String {
-        self.elements.iter()
+        self.elements
+            .iter()
             .filter_map(|e| match e {
                 LineElement::Text(text) => Some(text.as_str()),
                 _ => None,
@@ -25,7 +26,7 @@ impl DocumentLine {
             .collect::<Vec<_>>()
             .join("")
     }
-    
+
     pub fn is_empty(&self) -> bool {
         self.elements.iter().all(|e| match e {
             LineElement::Text(text) => text.is_empty(),

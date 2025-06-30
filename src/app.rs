@@ -1,11 +1,11 @@
-use crate::models::{DocumentLine, DocumentMetadata};
 use crate::editor::{EditorCore, EditorRenderer};
-use crate::file_ops::{save_to_path, load_from_path};
+use crate::file_ops::{load_from_path, save_to_path};
 use crate::image::{create_sample_image, get_image_from_clipboard, process_image_bytes};
+use crate::models::{DocumentLine, DocumentMetadata};
 use crate::ui::{MenuBar, StatusBar};
 use eframe::egui;
-use std::path::PathBuf;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 pub struct NotepadApp {
     pub lines: Vec<DocumentLine>,
@@ -35,12 +35,13 @@ impl Default for NotepadApp {
 
 impl NotepadApp {
     pub fn get_window_title(&self) -> String {
-        let filename = self.file_path
+        let filename = self
+            .file_path
             .as_ref()
             .and_then(|p| p.file_name())
             .and_then(|n| n.to_str())
             .unwrap_or("Untitled");
-        
+
         let modified_marker = if self.is_modified { "*" } else { "" };
         format!("{}{} - Notepad", modified_marker, filename)
     }
@@ -57,7 +58,10 @@ impl NotepadApp {
         self.editor.reset();
     }
 
-    pub fn insert_image_from_bytes(&mut self, image_bytes: Vec<u8>) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn insert_image_from_bytes(
+        &mut self,
+        image_bytes: Vec<u8>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         process_image_bytes(
             image_bytes,
             &mut self.lines,
@@ -79,7 +83,10 @@ impl NotepadApp {
     pub fn paste_image_from_clipboard(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let buffer = get_image_from_clipboard()?;
         self.insert_image_from_bytes(buffer)?;
-        println!("Successfully inserted image. Total lines: {}", self.lines.len());
+        println!(
+            "Successfully inserted image. Total lines: {}",
+            self.lines.len()
+        );
         Ok(())
     }
 
@@ -100,10 +107,10 @@ impl NotepadApp {
 
     pub fn open_file(&mut self, path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         let (lines, metadata, image_data) = load_from_path(path.clone())?;
-        
+
         // Clear existing data
         self.image_cache.clear();
-        
+
         // Update app state
         self.lines = lines;
         self.metadata = metadata;
@@ -111,7 +118,7 @@ impl NotepadApp {
         self.file_path = Some(path);
         self.is_modified = false;
         self.editor.reset();
-        
+
         Ok(())
     }
 }
@@ -124,7 +131,7 @@ impl eframe::App for NotepadApp {
         // Menu bar
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             let actions = MenuBar::render(ui, ctx);
-            
+
             if actions.new_file {
                 self.new_file();
             }
@@ -157,18 +164,18 @@ impl eframe::App for NotepadApp {
         // Main content area
         egui::CentralPanel::default().show(ctx, |ui| {
             // Handle input and get modification status
-            let modified = self.editor.handle_input(ui, &mut self.lines);
+            let modified = self.editor.handle_input(ui, ctx, &mut self.lines);
             if modified {
                 self.is_modified = true;
             }
-            
+
             // Handle global Ctrl+V for image paste
             if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::V)) {
                 if let Err(e) = self.paste_image_from_clipboard() {
                     println!("Error pasting image: {}", e);
                 }
             }
-            
+
             // Render the editor
             EditorRenderer::render(
                 ui,

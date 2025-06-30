@@ -1,9 +1,9 @@
-mod models;
+mod app;
 mod editor;
 mod file_ops;
 mod image;
+mod models;
 mod ui;
-mod app;
 
 use app::NotepadApp;
 use eframe::egui;

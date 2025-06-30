@@ -29,7 +29,7 @@ pub struct MenuBar;
 impl MenuBar {
     pub fn render(ui: &mut egui::Ui, ctx: &egui::Context) -> MenuActions {
         let mut actions = MenuActions::default();
-        
+
         egui::menu::bar(ui, |ui| {
             ui.menu_button("File", |ui| {
                 if ui.button("New").clicked() {
@@ -105,7 +105,7 @@ impl MenuBar {
                 }
             });
         });
-        
+
         actions
     }
 }
