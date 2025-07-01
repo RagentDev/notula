@@ -1,11 +1,16 @@
-﻿use eframe::egui;
-use crate::components::CustomWindowFrame;
+﻿use crate::components::CustomWindowFrame;
+use eframe::egui;
+use crate::assets::AssetManager;
 
-pub struct NotepadApp {}
+pub struct NotepadApp {
+    assets: AssetManager,
+}
 
 impl Default for NotepadApp {
     fn default() -> Self {
-        Self {}
+        Self {
+            assets: AssetManager::new(),
+        }
     }
 }
 
@@ -17,7 +22,7 @@ impl NotepadApp {
 
 impl eframe::App for NotepadApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        CustomWindowFrame::show(ctx, &self.get_window_title(), |ui| {
+        CustomWindowFrame::show(ctx, &self.get_window_title(), &self.assets, |ui| {
             ui.label("This is just the contents of the window.");
             ui.horizontal(|ui| {
                 ui.label("egui theme:");

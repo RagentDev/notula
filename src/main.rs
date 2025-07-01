@@ -1,5 +1,7 @@
 mod app;
 mod components;
+mod icons;
+mod assets;
 
 use app::NotepadApp;
 use eframe::egui;
@@ -18,6 +20,9 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Notepad",
         options,
-        Box::new(|_cc| Ok(Box::<NotepadApp>::default())),
+        Box::new(|_cc| {
+            egui_extras::install_image_loaders(&_cc.egui_ctx);
+            Ok(Box::<NotepadApp>::default())
+        }),
     )
 }

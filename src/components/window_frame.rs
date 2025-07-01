@@ -1,7 +1,9 @@
-﻿use eframe::egui::{self, ViewportCommand};
+﻿use crate::icons::Icons;
+use eframe::egui::{self, ViewportCommand};
 use eframe::emath::Vec2;
 use eframe::epaint::Color32;
-use egui::{Button, Response, RichText};
+use egui::{Button, Response};
+use crate::assets::AssetManager;
 
 // Window frame constants
 const RESIZE_HANDLE_SIZE: f32 = 4.0;
@@ -17,7 +19,12 @@ const TITLE_FONT_SIZE: f32 = 20.0;
 pub struct CustomWindowFrame;
 
 impl CustomWindowFrame {
-    pub fn show(ctx: &egui::Context, title: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
+    pub fn show(
+        ctx: &egui::Context,
+        title: &str,
+        assets: &AssetManager,
+        add_contents: impl FnOnce(&mut egui::Ui),
+    ) {
         use egui::{CentralPanel, UiBuilder};
 
         let panel_frame = egui::Frame::new()
@@ -34,9 +41,12 @@ impl CustomWindowFrame {
                 rect
             };
 
-            TitleBar::show(ui, title_bar_rect, title);
+            TitleBar::show(ui, title_bar_rect, title, assets);
 
-            Self::handle_resize(ui, app_rect);
+            let is_maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+            if !is_maximized {
+                Self::handle_resize(ui, app_rect);
+            }
 
             let content_rect = {
                 let mut rect = app_rect;
@@ -162,7 +172,7 @@ impl CustomWindowFrame {
 struct TitleBar;
 
 impl TitleBar {
-    fn show(ui: &mut egui::Ui, title_bar_rect: egui::Rect, title: &str) {
+    fn show(ui: &mut egui::Ui, title_bar_rect: egui::Rect, title: &str, assets: &AssetManager) {
         use egui::{Align2, FontId, Id, PointerButton, Sense, UiBuilder, vec2};
 
         let painter = ui.painter();
@@ -193,7 +203,7 @@ impl TitleBar {
 
         // Handle interactions
         Self::handle_interactions(ui, &title_bar_response);
-        Self::show_window_controls(ui, title_bar_rect);
+        Self::show_window_controls(ui, title_bar_rect, assets);
     }
 
     fn handle_interactions(ui: &mut egui::Ui, title_bar_response: &egui::Response) {
@@ -208,7 +218,7 @@ impl TitleBar {
         }
     }
 
-    fn show_window_controls(ui: &mut egui::Ui, title_bar_rect: egui::Rect) {
+    fn show_window_controls(ui: &mut egui::Ui, title_bar_rect: egui::Rect, assets: &AssetManager) {
         ui.scope_builder(
             egui::UiBuilder::new()
                 .max_rect(title_bar_rect)
@@ -217,7 +227,7 @@ impl TitleBar {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 ui.visuals_mut().button_frame = false;
                 ui.add_space(TITLE_BAR_PADDING);
-                WindowControls::show(ui);
+                WindowControls::show(ui, assets);
             },
         );
     }
@@ -226,28 +236,16 @@ impl TitleBar {
 struct WindowControls;
 
 impl WindowControls {
-    fn show(ui: &mut egui::Ui) {
-        use egui::{Button, RichText};
-
-        let button_size = Vec2::new(WINDOW_BUTTON_WIDTH, WINDOW_BUTTON_HEIGHT);
-
+    fn show(ui: &mut egui::Ui, assets: &AssetManager) {
         // Close button
-        let close_response = ui
-            .add_sized(
-                button_size,
-                Button::new(RichText::new("×").size(WINDOW_BUTTON_HEIGHT * 0.7)),
-            )
-            .on_hover_text("Close the window");
+        let close_button = Self::create_button(
+            ui,
+            &assets.icons.close,
+            "Close the window",
+            Color32::from_rgba_unmultiplied(220, 53, 69, 50),
+        );
 
-        if close_response.hovered() {
-            ui.painter().rect_filled(
-                close_response.rect,
-                ui.style().visuals.widgets.noninteractive.corner_radius,
-                Color32::from_rgba_unmultiplied(220, 53, 69, 10),
-            );
-        }
-
-        if close_response.clicked() {
+        if close_button.clicked() {
             ui.ctx().send_viewport_cmd(ViewportCommand::Close);
         }
 
@@ -256,27 +254,19 @@ impl WindowControls {
         // Maximize/Restore button
         let is_maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
         let (icon, tooltip) = if is_maximized {
-            ("◱", "Restore window")
+            (&assets.icons.maximize, "Restore window")
         } else {
-            ("□", "Maximize window")
+            (&assets.icons.restore, "Maximize window")
         };
 
-        let maximize_response = ui
-            .add_sized(
-                button_size,
-                Button::new(RichText::new(icon).size(WINDOW_BUTTON_HEIGHT * 0.7)),
-            )
-            .on_hover_text(tooltip);
+        let maximize_button = Self::create_button(
+            ui,
+            icon,
+            tooltip,
+            Color32::from_rgba_unmultiplied(200, 200, 200, 5),
+        );
 
-        if maximize_response.hovered() {
-            ui.painter().rect_filled(
-                maximize_response.rect,
-                ui.style().visuals.widgets.noninteractive.corner_radius,
-                Color32::from_rgba_unmultiplied(200, 200, 200, 10),
-            );
-        }
-
-        if maximize_response.clicked() {
+        if maximize_button.clicked() {
             ui.ctx()
                 .send_viewport_cmd(ViewportCommand::Maximized(!is_maximized));
         }
@@ -286,9 +276,9 @@ impl WindowControls {
         // Minimize button
         let minimize_button = Self::create_button(
             ui,
-            "−".to_string(),
-            "Minimize the window".to_string(),
-            Color32::from_rgba_unmultiplied(200, 200, 200, 10),
+            &assets.icons.minimize,
+            "Minimize the window",
+            Color32::from_rgba_unmultiplied(200, 200, 200, 5),
         );
 
         if minimize_button.clicked() {
@@ -298,17 +288,14 @@ impl WindowControls {
 
     fn create_button(
         ui: &mut egui::Ui,
-        text: String,
-        hover_text: String,
+        image: &egui::ImageSource<'static>,
+        hover_text: &str,
         highlight_color: Color32,
     ) -> Response {
         let button_size = Vec2::new(WINDOW_BUTTON_WIDTH, WINDOW_BUTTON_HEIGHT);
 
         let button = ui
-            .add_sized(
-                button_size,
-                Button::new(RichText::new(text).size(WINDOW_BUTTON_HEIGHT * 0.7)),
-            )
+            .add_sized(button_size, Button::image(image.clone()))
             .on_hover_text(hover_text);
 
         if button.hovered() {
