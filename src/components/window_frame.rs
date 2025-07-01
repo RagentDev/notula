@@ -1,7 +1,12 @@
 ﻿use eframe::egui::{self, ViewportCommand};
+use eframe::emath::Vec2;
+use eframe::epaint::Color32;
+use egui::{Button, Response, RichText};
 
 // Window frame constants
+const RESIZE_HANDLE_SIZE: f32 = 4.0;
 const TITLE_BAR_HEIGHT: f32 = 32.0;
+const WINDOW_BUTTON_WIDTH: f32 = 32.0;
 const WINDOW_BUTTON_HEIGHT: f32 = 24.0;
 const WINDOW_BUTTON_SPACING: f32 = 8.0;
 const TITLE_BAR_PADDING: f32 = 8.0;
@@ -31,6 +36,8 @@ impl CustomWindowFrame {
 
             TitleBar::show(ui, title_bar_rect, title);
 
+            Self::handle_resize(ui, app_rect);
+
             let content_rect = {
                 let mut rect = app_rect;
                 rect.min.y = title_bar_rect.max.y;
@@ -41,6 +48,114 @@ impl CustomWindowFrame {
             let mut content_ui = ui.new_child(UiBuilder::new().max_rect(content_rect));
             add_contents(&mut content_ui);
         });
+    }
+
+    fn handle_resize(ui: &mut egui::Ui, window_rect: egui::Rect) {
+        use egui::{CursorIcon, Id, Sense};
+
+        let resize_size = RESIZE_HANDLE_SIZE;
+
+        // Define resize areas
+        let resize_areas = [
+            // Corners
+            (
+                window_rect.left_top(),
+                resize_size,
+                resize_size,
+                CursorIcon::ResizeNwSe,
+                egui::Vec2::new(-1.0, -1.0),
+            ), // Top-left
+            (
+                egui::Pos2::new(window_rect.right() - resize_size, window_rect.top()),
+                resize_size,
+                resize_size,
+                CursorIcon::ResizeNeSw,
+                egui::Vec2::new(1.0, -1.0),
+            ), // Top-right
+            (
+                egui::Pos2::new(window_rect.left(), window_rect.bottom() - resize_size),
+                resize_size,
+                resize_size,
+                CursorIcon::ResizeNeSw,
+                egui::Vec2::new(-1.0, 1.0),
+            ), // Bottom-left
+            (
+                egui::Pos2::new(
+                    window_rect.right() - resize_size,
+                    window_rect.bottom() - resize_size,
+                ),
+                resize_size,
+                resize_size,
+                CursorIcon::ResizeNwSe,
+                egui::Vec2::new(1.0, 1.0),
+            ), // Bottom-right
+            // Edges
+            (
+                egui::Pos2::new(window_rect.left(), window_rect.top() + resize_size),
+                resize_size,
+                window_rect.height() - 2.0 * resize_size,
+                CursorIcon::ResizeHorizontal,
+                egui::Vec2::new(-1.0, 0.0),
+            ), // Left edge
+            (
+                egui::Pos2::new(
+                    window_rect.right() - resize_size,
+                    window_rect.top() + resize_size,
+                ),
+                resize_size,
+                window_rect.height() - 2.0 * resize_size,
+                CursorIcon::ResizeHorizontal,
+                egui::Vec2::new(1.0, 0.0),
+            ), // Right edge
+            (
+                egui::Pos2::new(window_rect.left() + resize_size, window_rect.top()),
+                window_rect.width() - 2.0 * resize_size,
+                resize_size,
+                CursorIcon::ResizeVertical,
+                egui::Vec2::new(0.0, -1.0),
+            ), // Top edge
+            (
+                egui::Pos2::new(
+                    window_rect.left() + resize_size,
+                    window_rect.bottom() - resize_size,
+                ),
+                window_rect.width() - 2.0 * resize_size,
+                resize_size,
+                CursorIcon::ResizeVertical,
+                egui::Vec2::new(0.0, 1.0),
+            ), // Bottom edge
+        ];
+
+        for (i, (pos, width, height, cursor_icon, direction)) in resize_areas.iter().enumerate() {
+            let resize_rect = egui::Rect::from_min_size(*pos, egui::Vec2::new(*width, *height));
+
+            let response = ui.interact(
+                resize_rect,
+                Id::new(format!("resize_handle_{}", i)),
+                Sense::click_and_drag(),
+            );
+
+            if response.hovered() {
+                ui.ctx().set_cursor_icon(*cursor_icon);
+            }
+
+            if response.drag_started() {
+                // Start resize operation
+                ui.ctx().send_viewport_cmd(ViewportCommand::BeginResize(
+                    match (direction.x, direction.y) {
+                        (-1.0, -1.0) => egui::viewport::ResizeDirection::NorthWest,
+                        (0.0, -1.0) => egui::viewport::ResizeDirection::North,
+                        (1.0, -1.0) => egui::viewport::ResizeDirection::NorthEast,
+                        (-1.0, 0.0) => egui::viewport::ResizeDirection::West,
+                        (1.0, 0.0) => egui::viewport::ResizeDirection::East,
+                        (-1.0, 1.0) => egui::viewport::ResizeDirection::SouthWest,
+                        (0.0, 1.0) => egui::viewport::ResizeDirection::South,
+                        (1.0, 1.0) => egui::viewport::ResizeDirection::SouthEast,
+                        _ => egui::viewport::ResizeDirection::SouthEast,
+                    },
+                ));
+            }
+        }
     }
 }
 
@@ -114,10 +229,24 @@ impl WindowControls {
     fn show(ui: &mut egui::Ui) {
         use egui::{Button, RichText};
 
+        let button_size = Vec2::new(WINDOW_BUTTON_WIDTH, WINDOW_BUTTON_HEIGHT);
+
         // Close button
         let close_response = ui
-            .add(Button::new(RichText::new("×").size(WINDOW_BUTTON_HEIGHT)))
+            .add_sized(
+                button_size,
+                Button::new(RichText::new("×").size(WINDOW_BUTTON_HEIGHT * 0.7)),
+            )
             .on_hover_text("Close the window");
+
+        if close_response.hovered() {
+            ui.painter().rect_filled(
+                close_response.rect,
+                ui.style().visuals.widgets.noninteractive.corner_radius,
+                Color32::from_rgba_unmultiplied(220, 53, 69, 10),
+            );
+        }
+
         if close_response.clicked() {
             ui.ctx().send_viewport_cmd(ViewportCommand::Close);
         }
@@ -133,8 +262,20 @@ impl WindowControls {
         };
 
         let maximize_response = ui
-            .add(Button::new(RichText::new(icon).size(WINDOW_BUTTON_HEIGHT)))
+            .add_sized(
+                button_size,
+                Button::new(RichText::new(icon).size(WINDOW_BUTTON_HEIGHT * 0.7)),
+            )
             .on_hover_text(tooltip);
+
+        if maximize_response.hovered() {
+            ui.painter().rect_filled(
+                maximize_response.rect,
+                ui.style().visuals.widgets.noninteractive.corner_radius,
+                Color32::from_rgba_unmultiplied(200, 200, 200, 10),
+            );
+        }
+
         if maximize_response.clicked() {
             ui.ctx()
                 .send_viewport_cmd(ViewportCommand::Maximized(!is_maximized));
@@ -143,11 +284,41 @@ impl WindowControls {
         ui.add_space(WINDOW_BUTTON_SPACING);
 
         // Minimize button
-        let minimize_response = ui
-            .add(Button::new(RichText::new("−").size(WINDOW_BUTTON_HEIGHT)))
-            .on_hover_text("Minimize the window");
-        if minimize_response.clicked() {
+        let minimize_button = Self::create_button(
+            ui,
+            "−".to_string(),
+            "Minimize the window".to_string(),
+            Color32::from_rgba_unmultiplied(200, 200, 200, 10),
+        );
+
+        if minimize_button.clicked() {
             ui.ctx().send_viewport_cmd(ViewportCommand::Minimized(true));
         }
+    }
+
+    fn create_button(
+        ui: &mut egui::Ui,
+        text: String,
+        hover_text: String,
+        highlight_color: Color32,
+    ) -> Response {
+        let button_size = Vec2::new(WINDOW_BUTTON_WIDTH, WINDOW_BUTTON_HEIGHT);
+
+        let button = ui
+            .add_sized(
+                button_size,
+                Button::new(RichText::new(text).size(WINDOW_BUTTON_HEIGHT * 0.7)),
+            )
+            .on_hover_text(hover_text);
+
+        if button.hovered() {
+            ui.painter().rect_filled(
+                button.rect,
+                ui.style().visuals.widgets.noninteractive.corner_radius,
+                highlight_color,
+            );
+        }
+
+        button
     }
 }
