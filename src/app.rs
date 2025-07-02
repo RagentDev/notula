@@ -5,6 +5,7 @@ use eframe::emath::Vec2;
 
 pub struct NotepadApp {
     assets: AssetManager,
+    text_editor: TextEditor,
     text_content: String
 }
 
@@ -12,6 +13,7 @@ impl Default for NotepadApp {
     fn default() -> Self {
         Self {
             assets: AssetManager::new(),
+            text_editor: TextEditor::new().font_size(14.0),
             text_content: String::new()
         }
     }
@@ -71,14 +73,11 @@ impl eframe::App for NotepadApp {
 
                 ui.separator();
 
-                let mut text_editor = TextEditor::new()
-                    .font_size(14.0);
-
                 let image_data = egui::ColorImage::new([64, 64], egui::Color32::from_rgb(255, 100, 100));
                 let texture = ctx.load_texture("test_image", image_data, egui::TextureOptions::default());
-                text_editor.add_image(1, texture, Vec2::new(64.0, 64.0));
+                self.text_editor.add_image(1, texture, Vec2::new(64.0, 64.0));
 
-                text_editor.show(ui, &mut self.text_content)
+                self.text_editor.show(ui, &mut self.text_content)
             });
         });
     }

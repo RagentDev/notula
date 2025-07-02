@@ -81,9 +81,10 @@ impl TextEditor {
             for event in events {
                 match event {
                     egui::Event::Text(new_text) => {
+                        println!("Input: '{}', char count: {}", new_text, new_text.chars().count());
                         text.push_str(&new_text);
-                        self.cursor_column += &new_text.chars().count();
-                        std::println!("{0}", &self.cursor_column);
+                        self.cursor_column += new_text.chars().count();
+                        println!("New cursor_column: {}, cursor_line: {}", self.cursor_column, self.cursor_line);
                         response.mark_changed();
                     }
                     egui::Event::Key {
