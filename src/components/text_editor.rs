@@ -6,6 +6,8 @@ pub struct TextEditor {
     hint_text: String,
     margin: f32,
     images: std::collections::HashMap<usize, (egui::TextureHandle, Vec2)>,
+    cursor_line: usize,
+    cursor_column: usize,
 }
 
 impl Default for TextEditor {
@@ -15,6 +17,8 @@ impl Default for TextEditor {
             hint_text: "Start typing...".to_string(),
             margin: 8.0,
             images: Default::default(),
+            cursor_line: 0,
+            cursor_column: 0
         }
     }
 }
@@ -39,7 +43,7 @@ impl TextEditor {
         self
     }
 
-    pub fn show(self, ui: &mut Ui, text: &mut String) -> Response {
+    pub fn show(&mut self, ui: &mut Ui, text: &mut String) -> Response {
         let available_rect = ui.available_rect_before_wrap();
         let desired_size = Vec2::new(
             available_rect.width().max(100.0),
@@ -78,6 +82,8 @@ impl TextEditor {
                 match event {
                     egui::Event::Text(new_text) => {
                         text.push_str(&new_text);
+                        self.cursor_column += &new_text.chars().count();
+                        std::println!("{0}", &self.cursor_column);
                         response.mark_changed();
                     }
                     egui::Event::Key {
@@ -132,11 +138,6 @@ impl TextEditor {
 
         // Render lines
         self.render_lines(ui, text, &font_id, line_numbers_rect, content_rect);
-
-        // Update cursor drawing call
-        if response.has_focus() {
-            self.draw_cursor(ui, content_rect, &text, &font_id);
-        }
 
         response
     }
@@ -227,10 +228,26 @@ impl TextEditor {
                     );
                 }
 
+                // Draw cursor if this is the cursor line
+                if line_idx == self.cursor_line {
+                    let chars_to_cursor = self.cursor_column.min(line.len());
+                    let x_offset = ui.fonts(|f| f.glyph_width(font_id, ' ')) * chars_to_cursor as f32;
+                    let cursor_pos = Pos2::new(content_rect.left() + x_offset, current_y);
+
+                    let blink = (ui.input(|i| i.time) * 2.0) as i32 % 2 == 0;
+                    if blink {
+                        ui.painter().vline(
+                            cursor_pos.x,
+                            cursor_pos.y..=(cursor_pos.y + base_line_height),
+                            Stroke::new(1.0, ui.visuals().text_color()),
+                        );
+                    }
+                }
+
                 current_y += line_height;
             }
 
-            // Handle trailing newline
+            // Handle trailing newline at end of text
             if text.ends_with('\n') {
                 let extra_line = text.lines().count();
                 ui.painter().text(
@@ -244,46 +261,6 @@ impl TextEditor {
                     ui.visuals().weak_text_color(),
                 );
             }
-        }
-    }
-
-    fn draw_cursor(&self, ui: &mut Ui, text_rect: Rect, text: &str, font_id: &FontId) {
-        let cursor_pos = if text.is_empty() {
-            text_rect.left_top()
-        } else {
-            let lines: Vec<&str> = text.lines().collect();
-            let base_line_height = ui.fonts(|f| f.row_height(font_id));
-
-            // Calculate y position accounting for images
-            let mut y_offset = 0.0;
-            for (line_idx, _) in lines.iter().enumerate().take(lines.len().saturating_sub(1)) {
-                if let Some((_, image_size)) = self.images.get(&line_idx) {
-                    let padding = 8.0;
-                    y_offset += base_line_height + padding + image_size.y + padding;
-                } else {
-                    y_offset += base_line_height;
-                }
-            }
-
-            let last_line = lines.last().unwrap_or(&"");
-            let last_line_width =
-                ui.fonts(|f| f.glyph_width(font_id, ' ')) * last_line.len() as f32;
-
-            Pos2::new(
-                text_rect.left() + last_line_width,
-                text_rect.top() + y_offset,
-            )
-        };
-
-        // Blinking animation (rest stays the same)
-        let blink = (ui.input(|i| i.time) * 2.0) as i32 % 2 == 0;
-        if blink {
-            let line_height = ui.fonts(|f| f.row_height(font_id));
-            ui.painter().vline(
-                cursor_pos.x,
-                cursor_pos.y..=(cursor_pos.y + line_height),
-                Stroke::new(1.0, ui.visuals().text_color()),
-            );
         }
     }
 
