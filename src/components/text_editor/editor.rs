@@ -1,5 +1,7 @@
-﻿use eframe::epaint::StrokeKind;
-use egui::{Color32, FontId, Key, Pos2, Rect, Response, Stroke, Ui, Vec2};
+﻿use super::renderer::TextEditorRenderer;
+
+use eframe::epaint::StrokeKind;
+use egui::{Color32, EventFilter, FontId, Key, Pos2, Rect, Response, Stroke, Ui, Vec2};
 
 const IMAGE_PADDING: f32 = 8.0;
 
@@ -117,47 +119,72 @@ impl TextEditor {
         response
     }
 
-    fn handle_click_positioning(&mut self, response: &Response, ui: &Ui, text: &str, font_id: &FontId, content_rect: Rect) {
+    fn handle_click_positioning(
+        &mut self,
+        response: &Response,
+        ui: &Ui,
+        text: &str,
+        font_id: &FontId,
+        content_rect: Rect,
+    ) {
         if let Some(click_pos) = response.interact_pointer_pos() {
             let relative_pos = click_pos - content_rect.min;
             let base_line_height = ui.fonts(|f| f.row_height(font_id));
+            
             let lines: Vec<&str> = text.lines().collect();
 
+            let max_line = if text.ends_with('\n') {
+                lines.len()
+            } else {
+                lines.len().saturating_sub(1)
+            };
+            
             let mut current_y = 0.0;
-            let mut clicked_line = 0;
+            let mut clicked_line = None;
 
             // Find which line was clicked by walking through Y positions
             for (line_idx, line) in lines.iter().enumerate() {
                 let line_height = self.calculate_line_height(line, base_line_height);
 
                 if relative_pos.y >= current_y && relative_pos.y < current_y + line_height {
-                    clicked_line = line_idx;
+                    clicked_line = Some(line_idx);
                     break;
                 }
                 current_y += line_height;
             }
 
+            let clicked_line = clicked_line.unwrap_or(max_line);
+
             // Rest of character positioning logic remains the same...
-            if let Some(line) = lines.get(clicked_line) {
-                // Find closest character position in the line
-                let mut best_column = 0;
-                let mut best_distance = f32::INFINITY;
+            if clicked_line < lines.len() {
+                if let Some(line) = lines.get(clicked_line) {
+                    // Find closest character position in the line
+                    let mut best_column = 0;
+                    let mut best_distance = f32::INFINITY;
 
-                for col in 0..=line.chars().count() {
-                    let text_before = line.chars().take(col).collect::<String>();
-                    let x_pos = ui.fonts(|f| {
-                        f.layout_no_wrap(text_before, font_id.clone(), Color32::WHITE).size().x
-                    });
+                    for col in 0..=line.chars().count() {
+                        let text_before = line.chars().take(col).collect::<String>();
+                        let x_pos = ui.fonts(|f| {
+                            f.layout_no_wrap(text_before, font_id.clone(), Color32::WHITE)
+                                .size()
+                                .x
+                        });
 
-                    let distance = (x_pos - relative_pos.x).abs();
-                    if distance < best_distance {
-                        best_distance = distance;
-                        best_column = col;
+                        let distance = (x_pos - relative_pos.x).abs();
+                        if distance < best_distance {
+                            best_distance = distance;
+                            best_column = col;
+                        }
                     }
-                }
 
+                    self.cursor_line = clicked_line;
+                    self.cursor_column = best_column;
+                }
+            }
+            else {
+                // We're on the trailing newline (empty line after text ending with '\n')
                 self.cursor_line = clicked_line;
-                self.cursor_column = best_column;
+                self.cursor_column = 0;
             }
         }
     }
@@ -166,6 +193,18 @@ impl TextEditor {
         if !response.has_focus() {
             return;
         }
+
+        ui.memory_mut(|mem| {
+            mem.set_focus_lock_filter(
+                response.id,
+                EventFilter {
+                    tab: true,
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    escape: false,
+                },
+            );
+        });
 
         let events = ui.input(|i| i.events.clone());
         for event in events {
@@ -188,6 +227,69 @@ impl TextEditor {
                         self.cursor_column = 0;
                         response.mark_changed();
                     }
+                    Key::ArrowLeft => {
+                        if self.cursor_column > 0 {
+                            self.cursor_column -= 1;
+                        } else if self.cursor_line > 0 {
+                            // Move to end of previous line
+                            self.cursor_line -= 1;
+                            let lines: Vec<&str> = text.lines().collect();
+                            if let Some(prev_line) = lines.get(self.cursor_line) {
+                                self.cursor_column = prev_line.chars().count();
+                            }
+                        }
+                    }
+                    Key::ArrowRight => {
+                        let lines: Vec<&str> = text.lines().collect();
+                        if let Some(current_line) = lines.get(self.cursor_line) {
+                            if self.cursor_column < current_line.chars().count() {
+                                self.cursor_column += 1;
+                            }
+                            else {
+                                let max_line = if text.ends_with('\n') {
+                                    lines.len()
+                                } else {
+                                    lines.len().saturating_sub(1)
+                                };
+
+                                if self.cursor_line < max_line {
+                                    self.cursor_line += 1;
+                                    self.cursor_column = 0;
+                                }
+                            }
+                        }
+                    }
+                    Key::ArrowUp => {
+                        if self.cursor_line > 0 {
+                            self.cursor_line -= 1;
+                            let lines: Vec<&str> = text.lines().collect();
+                            if let Some(new_line) = lines.get(self.cursor_line) {
+                                self.cursor_column =
+                                    self.cursor_column.min(new_line.chars().count());
+                            }
+                        }
+                    }
+                    Key::ArrowDown => {
+                        let lines: Vec<&str> = text.lines().collect();
+
+                        let max_line = if text.ends_with('\n') {
+                            lines.len()
+                        } else {
+                            lines.len().saturating_sub(1)
+                        };
+
+                        if self.cursor_line < max_line {
+                            self.cursor_line += 1;
+                            if let Some(new_line) = lines.get(self.cursor_line) {
+                                self.cursor_column =
+                                    self.cursor_column.min(new_line.chars().count());
+                            }
+                            else {
+                                // We're on the trailing newline, set column to 0
+                                self.cursor_column = 0;
+                            }
+                        }
+                    }
                     _ => {}
                 },
                 _ => {}
@@ -203,7 +305,9 @@ impl TextEditor {
     fn delete_char_before_cursor(&mut self, text: &mut String) {
         if self.cursor_column > 0 {
             let cursor_byte_pos = self.get_cursor_byte_position(text);
-            if let Some((char_start, _)) = text.char_indices().nth(cursor_byte_pos.saturating_sub(1)) {
+            if let Some((char_start, _)) =
+                text.char_indices().nth(cursor_byte_pos.saturating_sub(1))
+            {
                 text.remove(char_start);
             }
             self.cursor_column -= 1;
@@ -217,7 +321,11 @@ impl TextEditor {
 
         for (i, line) in lines.iter().enumerate() {
             if i == self.cursor_line {
-                byte_pos += line.chars().take(self.cursor_column).map(|c| c.len_utf8()).sum::<usize>();
+                byte_pos += line
+                    .chars()
+                    .take(self.cursor_column)
+                    .map(|c| c.len_utf8())
+                    .sum::<usize>();
                 break;
             }
             byte_pos += line.len() + 1; // +1 for newline
@@ -351,7 +459,9 @@ impl TextEditor {
                 let text_before_cursor = line.chars().take(chars_to_cursor).collect::<String>();
 
                 let x_offset = ui.fonts(|f| {
-                    f.layout_no_wrap(text_before_cursor, font_id.clone(), Color32::WHITE).size().x
+                    f.layout_no_wrap(text_before_cursor, font_id.clone(), Color32::WHITE)
+                        .size()
+                        .x
                 });
 
                 let cursor_pos = Pos2::new(content_rect.left() + x_offset, current_y);
@@ -364,6 +474,15 @@ impl TextEditor {
             }
 
             current_y += line_height;
+        }
+
+        // Draw cursor if we're on a line that doesn't exist yet (trailing newline)
+        if self.cursor_line >= text.lines().count() {
+            ui.painter().vline(
+                content_rect.left(),
+                current_y..=(current_y + base_line_height),
+                Stroke::new(1.0, ui.visuals().text_color()),
+            );
         }
 
         // Handle trailing newline at end of text
