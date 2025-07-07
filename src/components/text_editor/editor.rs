@@ -1,50 +1,58 @@
 ﻿use super::renderer::TextEditorRenderer;
 
+use crate::components::text_editor::util::calculate_line_height;
 use eframe::epaint::StrokeKind;
+use egui::WidgetType::TextEdit;
 use egui::{Color32, EventFilter, FontId, Key, Pos2, Rect, Response, Stroke, Ui, Vec2};
 
-const IMAGE_PADDING: f32 = 8.0;
+pub type TextEditorImageMap = std::collections::HashMap<usize, (egui::TextureHandle, Vec2)>;
+
+pub const IMAGE_PADDING: f32 = 8.0;
+
+#[derive(Debug, Clone)]
+pub struct FontMetrics {
+    pub font_id: FontId,
+    pub font_size: f32,
+    pub char_width: f32,
+    pub line_height: f32,
+}
+
+impl FontMetrics {
+    pub fn new(font_size: f32) -> Self {
+        Self {
+            font_id: FontId::monospace(font_size),
+            font_size,
+            char_width: 0.0,
+            line_height: 0.0,
+        }
+    }
+
+    pub fn calculate(&mut self, ui: &mut Ui) {
+        // self.line_number_width = ui.fonts(|f| f.glyph_width(&self.font_id, '0')) * (digits + 1) as f32;
+    }
+}
 
 pub struct TextEditor {
-    font_size: f32,
+    renderer: TextEditorRenderer,
+    font_metrics: FontMetrics,
     hint_text: String,
     margin: f32,
-    images: std::collections::HashMap<usize, (egui::TextureHandle, Vec2)>,
+    images: TextEditorImageMap,
     cursor_line: usize,
     cursor_column: usize,
 }
 
-impl Default for TextEditor {
-    fn default() -> Self {
+impl TextEditor {
+    pub fn new() -> Self {
         Self {
-            font_size: 14.0,
+            renderer: TextEditorRenderer::new(),
+            font_metrics: FontMetrics::new(14.0),
             hint_text: "Start typing...".to_string(),
             margin: 8.0,
             images: Default::default(),
             cursor_line: 0,
             cursor_column: 0,
         }
-    }
-}
-
-impl TextEditor {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn font_size(mut self, size: f32) -> Self {
-        self.font_size = size;
-        self
-    }
-
-    pub fn hint_text<S: Into<String>>(mut self, hint: S) -> Self {
-        self.hint_text = hint.into();
-        self
-    }
-
-    pub fn margin(mut self, margin: f32) -> Self {
-        self.margin = margin;
-        self
     }
 
     pub fn add_image(&mut self, line_index: usize, texture: egui::TextureHandle, size: Vec2) {
@@ -81,7 +89,7 @@ impl TextEditor {
         // Handle keyboard input
         self.handle_keyboard_input(&mut response, ui, text);
 
-        let font_id = FontId::monospace(self.font_size);
+        let font_id = &self.font_metrics.font_id.clone();
         let text_rect = rect.shrink(self.margin);
 
         // Calculate line number width
@@ -114,7 +122,17 @@ impl TextEditor {
         }
 
         // Render lines
-        self.render_lines(ui, text, &font_id, line_numbers_rect, content_rect);
+        self.renderer.render(
+            ui,
+            text,
+            &font_id,
+            line_numbers_rect,
+            content_rect,
+            &self.images,
+            self.cursor_line,
+            self.cursor_column,
+        );
+        // self.render_lines(ui, text, &font_id, line_numbers_rect, content_rect);
 
         response
     }
@@ -130,7 +148,7 @@ impl TextEditor {
         if let Some(click_pos) = response.interact_pointer_pos() {
             let relative_pos = click_pos - content_rect.min;
             let base_line_height = ui.fonts(|f| f.row_height(font_id));
-            
+
             let lines: Vec<&str> = text.lines().collect();
 
             let max_line = if text.ends_with('\n') {
@@ -138,13 +156,13 @@ impl TextEditor {
             } else {
                 lines.len().saturating_sub(1)
             };
-            
+
             let mut current_y = 0.0;
             let mut clicked_line = None;
 
             // Find which line was clicked by walking through Y positions
             for (line_idx, line) in lines.iter().enumerate() {
-                let line_height = self.calculate_line_height(line, base_line_height);
+                let line_height = calculate_line_height(line, base_line_height, &self.images);
 
                 if relative_pos.y >= current_y && relative_pos.y < current_y + line_height {
                     clicked_line = Some(line_idx);
@@ -180,8 +198,7 @@ impl TextEditor {
                     self.cursor_line = clicked_line;
                     self.cursor_column = best_column;
                 }
-            }
-            else {
+            } else {
                 // We're on the trailing newline (empty line after text ending with '\n')
                 self.cursor_line = clicked_line;
                 self.cursor_column = 0;
@@ -244,8 +261,7 @@ impl TextEditor {
                         if let Some(current_line) = lines.get(self.cursor_line) {
                             if self.cursor_column < current_line.chars().count() {
                                 self.cursor_column += 1;
-                            }
-                            else {
+                            } else {
                                 let max_line = if text.ends_with('\n') {
                                     lines.len()
                                 } else {
@@ -283,8 +299,7 @@ impl TextEditor {
                             if let Some(new_line) = lines.get(self.cursor_line) {
                                 self.cursor_column =
                                     self.cursor_column.min(new_line.chars().count());
-                            }
-                            else {
+                            } else {
                                 // We're on the trailing newline, set column to 0
                                 self.cursor_column = 0;
                             }
@@ -331,173 +346,5 @@ impl TextEditor {
             byte_pos += line.len() + 1; // +1 for newline
         }
         byte_pos
-    }
-
-    fn extract_image_id(&mut self, line: &str) -> Option<usize> {
-        if let Some(start) = line.find("[image(") {
-            if let Some(end) = line[start + 7..].find(")]") {
-                let id_str = &line[start + 7..start + 7 + end];
-                return id_str.parse::<usize>().ok();
-            }
-        }
-        None
-    }
-
-    fn calculate_line_height(&mut self, line: &str, base_line_height: f32) -> f32 {
-        if let Some(image_id) = self.extract_image_id(line) {
-            if let Some((_, image_size)) = self.images.get(&image_id) {
-                base_line_height + IMAGE_PADDING + image_size.y + IMAGE_PADDING
-            } else {
-                base_line_height
-            }
-        } else {
-            base_line_height
-        }
-    }
-
-    fn render_lines(
-        &mut self,
-        ui: &mut Ui,
-        text: &str,
-        font_id: &FontId,
-        line_numbers_rect: Rect,
-        content_rect: Rect,
-    ) {
-        if text.is_empty() {
-            self.render_empty_editor(ui, font_id, line_numbers_rect, content_rect);
-        } else {
-            self.render_text_content(ui, text, font_id, line_numbers_rect, content_rect);
-        }
-    }
-
-    fn render_empty_editor(
-        &self,
-        ui: &mut Ui,
-        font_id: &FontId,
-        line_numbers_rect: Rect,
-        content_rect: Rect,
-    ) {
-        ui.painter().text(
-            Pos2::new(
-                line_numbers_rect.right() - ui.fonts(|f| f.glyph_width(font_id, '0')),
-                line_numbers_rect.top(),
-            ),
-            egui::Align2::RIGHT_TOP,
-            "1",
-            font_id.clone(),
-            ui.visuals().weak_text_color(),
-        );
-        ui.painter().text(
-            content_rect.left_top(),
-            egui::Align2::LEFT_TOP,
-            &self.hint_text,
-            font_id.clone(),
-            ui.visuals().weak_text_color(),
-        );
-    }
-
-    fn render_text_content(
-        &mut self,
-        ui: &mut Ui,
-        text: &str,
-        font_id: &FontId,
-        line_numbers_rect: Rect,
-        content_rect: Rect,
-    ) {
-        let base_line_height = ui.fonts(|f| f.row_height(font_id));
-        let mut current_y = line_numbers_rect.top();
-
-        for (line_idx, line) in text.lines().enumerate() {
-            let mut line_height = self.calculate_line_height(line, base_line_height);
-
-            // If there's an image, draw it and change the line_height
-            if let Some((texture, image_size)) = self
-                .extract_image_id(line)
-                .and_then(|id| self.images.get(&id))
-            {
-                line_height = base_line_height + IMAGE_PADDING + image_size.y + IMAGE_PADDING;
-
-                // Draw image below the text with padding
-                let image_y = current_y + base_line_height + IMAGE_PADDING;
-                let image_rect = Rect::from_min_size(
-                    Pos2::new(content_rect.left() + IMAGE_PADDING, image_y),
-                    *image_size,
-                );
-                ui.painter().image(
-                    texture.id(),
-                    image_rect,
-                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                    Color32::WHITE,
-                );
-            }
-
-            // Draw line number (move this before the text drawing when no image)
-            let line_number = format!("{}", line_idx + 1);
-            ui.painter().text(
-                Pos2::new(
-                    line_numbers_rect.right() - ui.fonts(|f| f.glyph_width(font_id, '0')),
-                    current_y,
-                ),
-                egui::Align2::RIGHT_TOP,
-                &line_number,
-                font_id.clone(),
-                ui.visuals().weak_text_color(),
-            );
-
-            // Draw line text
-            ui.painter().text(
-                Pos2::new(content_rect.left(), current_y),
-                egui::Align2::LEFT_TOP,
-                line,
-                font_id.clone(),
-                ui.visuals().text_color(),
-            );
-
-            // Draw cursor if this is the cursor line
-            if line_idx == self.cursor_line {
-                let chars_to_cursor = self.cursor_column.min(line.chars().count());
-                let text_before_cursor = line.chars().take(chars_to_cursor).collect::<String>();
-
-                let x_offset = ui.fonts(|f| {
-                    f.layout_no_wrap(text_before_cursor, font_id.clone(), Color32::WHITE)
-                        .size()
-                        .x
-                });
-
-                let cursor_pos = Pos2::new(content_rect.left() + x_offset, current_y);
-
-                ui.painter().vline(
-                    cursor_pos.x,
-                    cursor_pos.y..=(cursor_pos.y + base_line_height),
-                    Stroke::new(1.0, ui.visuals().text_color()),
-                );
-            }
-
-            current_y += line_height;
-        }
-
-        // Draw cursor if we're on a line that doesn't exist yet (trailing newline)
-        if self.cursor_line >= text.lines().count() {
-            ui.painter().vline(
-                content_rect.left(),
-                current_y..=(current_y + base_line_height),
-                Stroke::new(1.0, ui.visuals().text_color()),
-            );
-        }
-
-        // Handle trailing newline at end of text
-        if text.ends_with('\n') {
-            let extra_line = text.lines().count();
-            ui.painter().text(
-                Pos2::new(
-                    line_numbers_rect.right() - ui.fonts(|f| f.glyph_width(font_id, '0')),
-                    current_y,
-                ),
-                egui::Align2::RIGHT_TOP,
-                &format!("{}", extra_line + 1),
-                font_id.clone(),
-                ui.visuals().weak_text_color(),
-            );
-        }
     }
 }

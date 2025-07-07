@@ -13,7 +13,7 @@ impl Default for NotepadApp {
     fn default() -> Self {
         Self {
             assets: AssetManager::new(),
-            text_editor: TextEditor::new().font_size(14.0),
+            text_editor: TextEditor::new(),
             text_content: String::new()
         }
     }
