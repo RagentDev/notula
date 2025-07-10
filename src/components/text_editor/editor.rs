@@ -1,8 +1,9 @@
 ﻿use super::renderer::TextEditorRenderer;
 
+use crate::components::text_editor::cursor_position::CursorPosition;
+use crate::components::text_editor::text_ops;
 use crate::components::text_editor::util::calculate_line_height;
 use eframe::epaint::StrokeKind;
-use egui::WidgetType::TextEdit;
 use egui::{Color32, EventFilter, FontId, Key, Pos2, Rect, Response, Stroke, Ui, Vec2};
 
 pub type TextEditorImageMap = std::collections::HashMap<usize, (egui::TextureHandle, Vec2)>;
@@ -38,8 +39,7 @@ pub struct TextEditor {
     hint_text: String,
     margin: f32,
     images: TextEditorImageMap,
-    cursor_line: usize,
-    cursor_column: usize,
+    cursor_pos: CursorPosition,
 }
 
 impl TextEditor {
@@ -50,8 +50,7 @@ impl TextEditor {
             hint_text: "Start typing...".to_string(),
             margin: 8.0,
             images: Default::default(),
-            cursor_line: 0,
-            cursor_column: 0,
+            cursor_pos: CursorPosition::new(0, 0),
         }
     }
 
@@ -129,12 +128,67 @@ impl TextEditor {
             line_numbers_rect,
             content_rect,
             &self.images,
-            self.cursor_line,
-            self.cursor_column,
+            self.cursor_pos.get_line_position(),
+            self.cursor_pos.get_column_position(),
         );
-        // self.render_lines(ui, text, &font_id, line_numbers_rect, content_rect);
 
         response
+    }
+
+    fn handle_keyboard_input(&mut self, response: &mut Response, ui: &Ui, text: &mut String) {
+        if !response.has_focus() {
+            return;
+        }
+
+        ui.memory_mut(|mem| {
+            mem.set_focus_lock_filter(
+                response.id,
+                EventFilter {
+                    tab: true,
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    escape: false,
+                },
+            );
+        });
+
+        let events = ui.input(|i| i.events.clone());
+
+        for event in events {
+            match event {
+                egui::Event::Text(new_text) => {
+                    text_ops::insert_text_at_position(text, self.cursor_pos, &new_text);
+                    self.cursor_pos.move_right_by(new_text.chars().count());
+                }
+                egui::Event::Key {
+                    key, pressed: true, ..
+                } => match key {
+                    Key::Backspace => {
+                        text_ops::delete_char_at_position(text, self.cursor_pos);
+                        self.cursor_pos.move_left(text);
+                    }
+                    Key::Enter => {
+                        text_ops::insert_newline_at_position(text, self.cursor_pos);
+                        self.cursor_pos.move_down(text);
+                        self.cursor_pos.move_to_line_start();
+                    }
+                    Key::ArrowUp => {
+                        self.cursor_pos.move_up(text);
+                    }
+                    Key::ArrowDown => {
+                        self.cursor_pos.move_down(text);
+                    }
+                    Key::ArrowLeft => {
+                        self.cursor_pos.move_left(text);
+                    }
+                    Key::ArrowRight => {
+                        self.cursor_pos.move_right(text);
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
     }
 
     fn handle_click_positioning(
@@ -195,156 +249,15 @@ impl TextEditor {
                         }
                     }
 
-                    self.cursor_line = clicked_line;
-                    self.cursor_column = best_column;
+                    self.cursor_pos.move_to_line_and_column(clicked_line, best_column, text);
+                    // self.cursor_line = clicked_line;
+                    // self.cursor_column = best_column;
                 }
             } else {
                 // We're on the trailing newline (empty line after text ending with '\n')
-                self.cursor_line = clicked_line;
-                self.cursor_column = 0;
+                // self.cursor_line = clicked_line;
+                // self.cursor_column = 0;
             }
         }
-    }
-
-    fn handle_keyboard_input(&mut self, response: &mut Response, ui: &mut Ui, text: &mut String) {
-        if !response.has_focus() {
-            return;
-        }
-
-        ui.memory_mut(|mem| {
-            mem.set_focus_lock_filter(
-                response.id,
-                EventFilter {
-                    tab: true,
-                    horizontal_arrows: true,
-                    vertical_arrows: true,
-                    escape: false,
-                },
-            );
-        });
-
-        let events = ui.input(|i| i.events.clone());
-        for event in events {
-            match event {
-                egui::Event::Text(new_text) => {
-                    self.insert_text_at_cursor(text, &new_text);
-                    self.cursor_column += new_text.chars().count();
-                    response.mark_changed();
-                }
-                egui::Event::Key {
-                    key, pressed: true, ..
-                } => match key {
-                    Key::Backspace => {
-                        self.delete_char_before_cursor(text);
-                        response.mark_changed();
-                    }
-                    Key::Enter => {
-                        self.insert_text_at_cursor(text, "\n");
-                        self.cursor_line += 1;
-                        self.cursor_column = 0;
-                        response.mark_changed();
-                    }
-                    Key::ArrowLeft => {
-                        if self.cursor_column > 0 {
-                            self.cursor_column -= 1;
-                        } else if self.cursor_line > 0 {
-                            // Move to end of previous line
-                            self.cursor_line -= 1;
-                            let lines: Vec<&str> = text.lines().collect();
-                            if let Some(prev_line) = lines.get(self.cursor_line) {
-                                self.cursor_column = prev_line.chars().count();
-                            }
-                        }
-                    }
-                    Key::ArrowRight => {
-                        let lines: Vec<&str> = text.lines().collect();
-                        if let Some(current_line) = lines.get(self.cursor_line) {
-                            if self.cursor_column < current_line.chars().count() {
-                                self.cursor_column += 1;
-                            } else {
-                                let max_line = if text.ends_with('\n') {
-                                    lines.len()
-                                } else {
-                                    lines.len().saturating_sub(1)
-                                };
-
-                                if self.cursor_line < max_line {
-                                    self.cursor_line += 1;
-                                    self.cursor_column = 0;
-                                }
-                            }
-                        }
-                    }
-                    Key::ArrowUp => {
-                        if self.cursor_line > 0 {
-                            self.cursor_line -= 1;
-                            let lines: Vec<&str> = text.lines().collect();
-                            if let Some(new_line) = lines.get(self.cursor_line) {
-                                self.cursor_column =
-                                    self.cursor_column.min(new_line.chars().count());
-                            }
-                        }
-                    }
-                    Key::ArrowDown => {
-                        let lines: Vec<&str> = text.lines().collect();
-
-                        let max_line = if text.ends_with('\n') {
-                            lines.len()
-                        } else {
-                            lines.len().saturating_sub(1)
-                        };
-
-                        if self.cursor_line < max_line {
-                            self.cursor_line += 1;
-                            if let Some(new_line) = lines.get(self.cursor_line) {
-                                self.cursor_column =
-                                    self.cursor_column.min(new_line.chars().count());
-                            } else {
-                                // We're on the trailing newline, set column to 0
-                                self.cursor_column = 0;
-                            }
-                        }
-                    }
-                    _ => {}
-                },
-                _ => {}
-            }
-        }
-    }
-
-    fn insert_text_at_cursor(&self, text: &mut String, new_text: &str) {
-        let cursor_byte_pos = self.get_cursor_byte_position(text);
-        text.insert_str(cursor_byte_pos, new_text);
-    }
-
-    fn delete_char_before_cursor(&mut self, text: &mut String) {
-        if self.cursor_column > 0 {
-            let cursor_byte_pos = self.get_cursor_byte_position(text);
-            if let Some((char_start, _)) =
-                text.char_indices().nth(cursor_byte_pos.saturating_sub(1))
-            {
-                text.remove(char_start);
-            }
-            self.cursor_column -= 1;
-        }
-        // ... handle line joining logic
-    }
-
-    fn get_cursor_byte_position(&self, text: &str) -> usize {
-        let lines: Vec<&str> = text.lines().collect();
-        let mut byte_pos = 0;
-
-        for (i, line) in lines.iter().enumerate() {
-            if i == self.cursor_line {
-                byte_pos += line
-                    .chars()
-                    .take(self.cursor_column)
-                    .map(|c| c.len_utf8())
-                    .sum::<usize>();
-                break;
-            }
-            byte_pos += line.len() + 1; // +1 for newline
-        }
-        byte_pos
     }
 }
